@@ -1,0 +1,86 @@
+name: Build and Publish Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux amd64
+            goos: linux
+            goarch: amd64
+            archive_name: wemod-launcher-linux-amd64.tar.gz
+
+          - name: Linux arm64
+            goos: linux
+            goarch: arm64
+            archive_name: wemod-launcher-linux-arm64.tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist/package
+          go build -o dist/package/wemod-launcher ./cmd/wemod-launcher
+          cp wemod dist/package/wemod
+          chmod +x dist/package/wemod-launcher dist/package/wemod
+
+      - name: Pack release archive
+        run: |
+          mkdir -p dist
+          tar -czf "dist/${{ matrix.archive_name }}" -C dist/package wemod-launcher wemod
+          sha256sum "dist/${{ matrix.archive_name }}" > "dist/${{ matrix.archive_name }}.sha256"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.ref_name }}
+          path: |
+            dist/${{ matrix.archive_name }}
+            dist/${{ matrix.archive_name }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.sha256
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
