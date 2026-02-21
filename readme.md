@@ -206,6 +206,16 @@ Important defaults:
 	- `./wemod prefix download`
 	- `./wemod prefix build`
 
+## Known Issues
+
+- `PROTON_ENABLE_WAYLAND=1` can cause a white WeMod window.
+- Recommended workaround: do not set `PROTON_ENABLE_WAYLAND=1` for launch options that use `wemod %command%`.
+- Example launch option:
+
+```text
+MANGOHUD=1 gamemoderun /absolute/path/to/wemod %command%
+```
+
 ## Notes
 
 - Linux-only Scope
