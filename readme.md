@@ -96,6 +96,10 @@ chmod +x ./wemod-launcher ./wemod
 
 ### 5) (Optional) Register global `wemod` command
 
+Keep `wemod` and `wemod-launcher` together in the same install directory
+(for example `~/.local/share/wemod-launcher-app`).
+Only create a symlink for `wemod`.
+
 Option A (user-local, recommended):
 
 ```bash
