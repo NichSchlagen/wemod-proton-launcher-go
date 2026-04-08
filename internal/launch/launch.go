@@ -45,7 +45,8 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 	}
 
 	wemodPrefix, protonMode := resolveWeModPrefix(cfg, gameCmd)
-	env := map[string]string{"WINEPREFIX": wemodPrefix}
+	logSteamProtonContext(logger, gameCmd, protonMode, wemodPrefix)
+	env := buildWeModEnv(logger, wemodPrefix, gameCmd, protonMode)
 	logger.Info("using WeMod prefix: %s", wemodPrefix)
 
 	if protonMode {
@@ -161,13 +162,23 @@ func validateCommand(command string) error {
 
 func startWeModProcess(ctx context.Context, cfg *config.Config, logger *logging.Logger, gameCmd []string, env map[string]string, protonMode bool) (*wemodRuntime, error) {
 	if protonMode {
-		if protonWine := resolveProtonWineBinary(gameCmd[0]); protonWine != "" {
-			logger.Info("starting WeMod with Proton wine binary")
+		if protonWine, ok := env["WINE"]; ok && protonWine != "" {
+			logger.Info("starting WeMod with Proton wine binary: %s", protonWine)
 			cmd, err := process.Start(ctx, logger, protonWine, []string{cfg.Paths.WeModExePath}, env)
 			if err != nil {
 				return nil, err
 			}
 			return &wemodRuntime{cmd: cmd}, nil
+		}
+		if len(gameCmd) > 0 {
+			if protonWine := resolveProtonWineBinary(gameCmd[0]); protonWine != "" {
+				logger.Info("starting WeMod with Proton wine binary: %s", protonWine)
+				cmd, err := process.Start(ctx, logger, protonWine, []string{cfg.Paths.WeModExePath}, env)
+				if err != nil {
+					return nil, err
+				}
+				return &wemodRuntime{cmd: cmd}, nil
+			}
 		}
 		logger.Info("starting WeMod with system wine in Proton prefix")
 		cmd, err := process.Start(ctx, logger, "wine", []string{cfg.Paths.WeModExePath}, env)
@@ -287,8 +298,9 @@ func ensurePrefixRuntime(ctx context.Context, logger *logging.Logger, prefixPath
 		},
 	)
 	if err != nil {
-		logger.Warn("could not inspect winetricks verbs in game prefix, skipping auto-install for this run: %v", err)
-		return nil
+		logger.Warn("could not inspect installed winetricks verbs in game prefix, continuing with best-effort install: %v", err)
+		userNotice("Could not verify installed components, attempting best-effort installation ...")
+		installed = map[string]bool{}
 	}
 	userNotice("Dependency check completed.")
 
@@ -380,6 +392,48 @@ func buildPrefixRuntimeEnv(prefixPath string, gameCmd []string, protonMode bool)
 	return env
 }
 
+func buildWeModEnv(logger *logging.Logger, prefixPath string, gameCmd []string, protonMode bool) map[string]string {
+	env := map[string]string{"WINEPREFIX": prefixPath}
+	if !protonMode || len(gameCmd) == 0 {
+		return env
+	}
+
+	if protonWine := resolveProtonWineBinary(gameCmd[0]); protonWine != "" {
+		env["WINE"] = protonWine
+		env["WINESERVER"] = resolveProtonWineServerBinary(protonWine)
+	}
+
+	if strings.TrimSpace(os.Getenv("PROTON_ENABLE_WAYLAND")) == "1" {
+		logger.Warn("PROTON_ENABLE_WAYLAND=1 detected; disabling for WeMod process to avoid white-window issues")
+		userNotice("Detected PROTON_ENABLE_WAYLAND=1, disabling it for WeMod process.")
+		env["PROTON_ENABLE_WAYLAND"] = "0"
+	}
+
+	return env
+}
+
+func logSteamProtonContext(logger *logging.Logger, gameCmd []string, protonMode bool, wemodPrefix string) {
+	if !protonMode {
+		return
+	}
+
+	logger.Info("proton mode detected")
+	if len(gameCmd) > 0 {
+		logger.Info("proton command executable: %s", gameCmd[0])
+		if protonWine := resolveProtonWineBinary(gameCmd[0]); protonWine != "" {
+			logger.Info("resolved Proton wine binary: %s", protonWine)
+		} else {
+			logger.Warn("could not resolve Proton wine binary from: %s", gameCmd[0])
+		}
+	}
+
+	logger.Info("env WINEPREFIX=%q", os.Getenv("WINEPREFIX"))
+	logger.Info("env STEAM_COMPAT_DATA_PATH=%q", os.Getenv("STEAM_COMPAT_DATA_PATH"))
+	logger.Info("env STEAM_COMPAT_CLIENT_INSTALL_PATH=%q", os.Getenv("STEAM_COMPAT_CLIENT_INSTALL_PATH"))
+	logger.Info("env PROTON_ENABLE_WAYLAND=%q", os.Getenv("PROTON_ENABLE_WAYLAND"))
+	logger.Info("effective WeMod prefix=%q", wemodPrefix)
+}
+
 func listInstalledVerbs(ctx context.Context, env map[string]string) (map[string]bool, error) {
 	cmd := exec.CommandContext(ctx, "winetricks", "list-installed")
 	cmd.Env = os.Environ()
@@ -396,7 +450,11 @@ func listInstalledVerbs(ctx context.Context, env map[string]string) (map[string]
 		installed[verb] = true
 	}
 	if err != nil {
-		return installed, fmt.Errorf("winetricks list-installed: %w", err)
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed == "" {
+			return installed, fmt.Errorf("winetricks list-installed: %w", err)
+		}
+		return installed, fmt.Errorf("winetricks list-installed: %w (output: %s)", err, trimmed)
 	}
 	return installed, nil
 }
