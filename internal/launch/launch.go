@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/NichSchlagen/wemod-proton-launcher-go/internal/config"
@@ -17,6 +18,9 @@ import (
 )
 
 const runtimeReadyMarker = ".wemod_launcher_runtime_ready"
+
+const wemodNoGameStabilityWindow = 30 * time.Second
+const wemodWithGameStabilityWindow = 8 * time.Second
 
 type wemodRuntime struct {
 	cmd *exec.Cmd
@@ -60,8 +64,11 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 	}
 
 	if len(gameCmd) == 0 {
-		wemodProc, err := startWeModProcess(ctx, cfg, logger, gameCmd, env, protonMode)
+		wemodProc, err := startWeModProcessWithRecovery(ctx, cfg, logger, gameCmd, env, protonMode)
 		if err != nil {
+			return fmt.Errorf("start wemod: %w", err)
+		}
+		if err := ensureProcessRunning(wemodProc.cmd.Process.Pid, wemodNoGameStabilityWindow); err != nil {
 			return fmt.Errorf("start wemod: %w", err)
 		}
 		logger.Info("WeMod started (pid=%d)", wemodProc.cmd.Process.Pid)
@@ -87,11 +94,19 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 		if err != nil {
 			logger.Warn("failed to start WeMod after game launch: %v", err)
 		} else {
+			if runErr := ensureProcessRunning(wemodProc.cmd.Process.Pid, wemodWithGameStabilityWindow); runErr != nil {
+				logger.Warn("WeMod exited shortly after start: %v", runErr)
+			} else {
 			logger.Info("WeMod started (pid=%d)", wemodProc.cmd.Process.Pid)
+			}
 		}
 	} else {
 		wemodProc, err = startWeModProcessWithRecovery(ctx, cfg, logger, gameCmd, env, protonMode)
 		if err != nil {
+			_ = gameProc.Process.Kill()
+			return fmt.Errorf("start wemod: %w", err)
+		}
+		if err := ensureProcessRunning(wemodProc.cmd.Process.Pid, wemodWithGameStabilityWindow); err != nil {
 			_ = gameProc.Process.Kill()
 			return fmt.Errorf("start wemod: %w", err)
 		}
@@ -432,6 +447,24 @@ func logSteamProtonContext(logger *logging.Logger, gameCmd []string, protonMode 
 	logger.Info("env STEAM_COMPAT_CLIENT_INSTALL_PATH=%q", os.Getenv("STEAM_COMPAT_CLIENT_INSTALL_PATH"))
 	logger.Info("env PROTON_ENABLE_WAYLAND=%q", os.Getenv("PROTON_ENABLE_WAYLAND"))
 	logger.Info("effective WeMod prefix=%q", wemodPrefix)
+}
+
+func ensureProcessRunning(pid int, settleWindow time.Duration) error {
+	deadline := time.Now().Add(settleWindow)
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("resolve process %d: %w", pid, err)
+	}
+
+	for {
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			return fmt.Errorf("WeMod process exited shortly after start (pid=%d): %w", pid, err)
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func listInstalledVerbs(ctx context.Context, env map[string]string) (map[string]bool, error) {
