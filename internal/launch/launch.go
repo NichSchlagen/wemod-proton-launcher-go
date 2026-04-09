@@ -19,7 +19,7 @@ import (
 
 const runtimeReadyMarker = ".wemod_launcher_runtime_ready"
 
-const wemodNoGameStabilityWindow = 30 * time.Second
+const wemodNoGameStabilityWindow = 10 * time.Second
 const wemodWithGameStabilityWindow = 8 * time.Second
 
 type wemodRuntime struct {
@@ -72,7 +72,33 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 			return fmt.Errorf("start wemod: %w", err)
 		}
 		logger.Info("WeMod started (pid=%d)", wemodProc.cmd.Process.Pid)
-		logger.Info("no game command provided, leaving WeMod running")
+		logger.Info("no game command provided, waiting until WeMod exits")
+
+		waitDone := make(chan error, 1)
+		go func() {
+			waitDone <- wemodProc.cmd.Wait()
+		}()
+
+		select {
+		case err := <-waitDone:
+			if err != nil {
+				return fmt.Errorf("wemod exited with error: %w", err)
+			}
+		case <-ctx.Done():
+			logger.Info("interrupt received, stopping WeMod and launcher")
+			if stopErr := stopWeModProcessGroup(wemodProc.cmd.Process.Pid); stopErr != nil {
+				logger.Warn("failed to stop WeMod process group: %v", stopErr)
+			}
+
+			select {
+			case <-waitDone:
+			case <-time.After(3 * time.Second):
+				logger.Warn("timeout waiting for WeMod process to exit after interrupt")
+			}
+			return nil
+		}
+
+		logger.Info("WeMod exited")
 		return nil
 	}
 
@@ -97,7 +123,7 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 			if runErr := ensureProcessRunning(wemodProc.cmd.Process.Pid, wemodWithGameStabilityWindow); runErr != nil {
 				logger.Warn("WeMod exited shortly after start: %v", runErr)
 			} else {
-			logger.Info("WeMod started (pid=%d)", wemodProc.cmd.Process.Pid)
+				logger.Info("WeMod started (pid=%d)", wemodProc.cmd.Process.Pid)
 			}
 		}
 	} else {
@@ -179,7 +205,7 @@ func startWeModProcess(ctx context.Context, cfg *config.Config, logger *logging.
 	if protonMode {
 		if protonWine, ok := env["WINE"]; ok && protonWine != "" {
 			logger.Info("starting WeMod with Proton wine binary: %s", protonWine)
-			cmd, err := process.Start(ctx, logger, protonWine, []string{cfg.Paths.WeModExePath}, env)
+			cmd, err := process.StartDetached(ctx, logger, protonWine, []string{cfg.Paths.WeModExePath}, env)
 			if err != nil {
 				return nil, err
 			}
@@ -188,7 +214,7 @@ func startWeModProcess(ctx context.Context, cfg *config.Config, logger *logging.
 		if len(gameCmd) > 0 {
 			if protonWine := resolveProtonWineBinary(gameCmd[0]); protonWine != "" {
 				logger.Info("starting WeMod with Proton wine binary: %s", protonWine)
-				cmd, err := process.Start(ctx, logger, protonWine, []string{cfg.Paths.WeModExePath}, env)
+				cmd, err := process.StartDetached(ctx, logger, protonWine, []string{cfg.Paths.WeModExePath}, env)
 				if err != nil {
 					return nil, err
 				}
@@ -196,7 +222,7 @@ func startWeModProcess(ctx context.Context, cfg *config.Config, logger *logging.
 			}
 		}
 		logger.Info("starting WeMod with system wine in Proton prefix")
-		cmd, err := process.Start(ctx, logger, "wine", []string{cfg.Paths.WeModExePath}, env)
+		cmd, err := process.StartDetached(ctx, logger, "wine", []string{cfg.Paths.WeModExePath}, env)
 		if err != nil {
 			return nil, err
 		}
@@ -204,7 +230,7 @@ func startWeModProcess(ctx context.Context, cfg *config.Config, logger *logging.
 	}
 
 	logger.Info("starting WeMod directly with wine")
-	cmd, err := process.Start(ctx, logger, "wine", []string{cfg.Paths.WeModExePath}, env)
+	cmd, err := process.StartDetached(ctx, logger, "wine", []string{cfg.Paths.WeModExePath}, env)
 	if err != nil {
 		return nil, err
 	}
@@ -465,6 +491,30 @@ func ensureProcessRunning(pid int, settleWindow time.Duration) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+func stopWeModProcessGroup(pid int) error {
+	// WeMod is started detached with Setpgid=true, so kill the full process group.
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("send SIGTERM to process group %d: %w", pid, err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("resolve process %d: %w", pid, err)
+	}
+	for time.Now().Before(deadline) {
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("send SIGKILL to process group %d: %w", pid, err)
+	}
+	return nil
 }
 
 func listInstalledVerbs(ctx context.Context, env map[string]string) (map[string]bool, error) {

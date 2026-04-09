@@ -170,6 +170,7 @@ Steam Launch Option:
 ### Global Flags
 
 - `--config <path>`: use a custom TOML config file
+- `--log-level <debug|info|warn|error>`: override log level for this run
 - `--non-interactive`: disable prompts
 - `--version`: print version
 

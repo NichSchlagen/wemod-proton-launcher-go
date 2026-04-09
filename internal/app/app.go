@@ -16,6 +16,7 @@ func Run(ctx context.Context, args []string) error {
 	global := flag.NewFlagSet("wemod-launcher", flag.ContinueOnError)
 	configPath := global.String("config", "", "Path to wemod launcher TOML config")
 	nonInteractive := global.Bool("non-interactive", false, "Disable prompts and require explicit flags")
+	logLevel := global.String("log-level", "", "Override log level (debug|info|warn|error)")
 	showVersion := global.Bool("version", false, "Print version")
 	global.SetOutput(flag.CommandLine.Output())
 
@@ -39,6 +40,9 @@ func Run(ctx context.Context, args []string) error {
 
 	if *nonInteractive {
 		cfg.General.Interactive = false
+	}
+	if strings.TrimSpace(*logLevel) != "" {
+		cfg.General.LogLevel = strings.TrimSpace(*logLevel)
 	}
 
 	logger, err := logging.New(cfg)
