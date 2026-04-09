@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,6 +62,9 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 		} else {
 			userNotice("Game prefix dependencies are ready.")
 		}
+
+		// Sync WeMod login + config from own prefix into game prefix
+		syncWeModData(logger, cfg.Paths.PrefixDir, wemodPrefix)
 	}
 
 	if len(gameCmd) == 0 {
@@ -371,6 +375,112 @@ func ensurePrefixRuntime(ctx context.Context, logger *logging.Logger, prefixPath
 	}
 
 	return nil
+}
+
+// syncWeModData copies the WeMod AppData folder (login + settings) from the
+// own WeMod prefix into the game's Proton prefix, so the user stays logged in.
+func syncWeModData(logger *logging.Logger, ownPrefixDir, gamePrefixDir string) {
+	src := findWeModAppDataDir(ownPrefixDir)
+	if src == "" {
+		logger.Info("no WeMod data found in own prefix, skipping sync")
+		return
+	}
+
+	dst := findOrCreateWeModAppDataDir(gamePrefixDir)
+	if dst == "" {
+		logger.Warn("could not resolve WeMod AppData target in game prefix, skipping sync")
+		return
+	}
+
+	logger.Info("syncing WeMod data: %s -> %s", src, dst)
+	if err := copyDir(src, dst); err != nil {
+		logger.Warn("WeMod data sync failed: %v", err)
+		return
+	}
+	logger.Info("WeMod data synced successfully")
+}
+
+// findWeModAppDataDir walks drive_c/users/*/AppData/Roaming/WeMod in the given prefix.
+func findWeModAppDataDir(prefixDir string) string {
+	usersDir := filepath.Join(prefixDir, "drive_c", "users")
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "WeMod")
+		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// findOrCreateWeModAppDataDir finds or creates the WeMod AppData dir in the target prefix.
+// Prefers "steamuser" (Proton default), falls back to first existing user, or creates steamuser.
+func findOrCreateWeModAppDataDir(prefixDir string) string {
+	usersDir := filepath.Join(prefixDir, "drive_c", "users")
+
+	// Prefer steamuser (Proton default)
+	steamuser := filepath.Join(usersDir, "steamuser", "AppData", "Roaming", "WeMod")
+	if err := os.MkdirAll(steamuser, 0o755); err == nil {
+		return steamuser
+	}
+
+	// Fall back to first existing user
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "WeMod")
+		if err := os.MkdirAll(candidate, 0o755); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// copyDir recursively copies src into dst, overwriting existing files.
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		return copyFile(path, target, info.Mode())
+	})
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func userNotice(format string, args ...any) {

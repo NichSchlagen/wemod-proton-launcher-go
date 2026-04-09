@@ -1,23 +1,20 @@
 # WeMod Launcher (Go)
 
 Linux CLI launcher for WeMod with Steam/Proton integration.
-This project starts WeMod alongside your game and handles common Proton/Wine scenarios automatically.
+Starts WeMod alongside your game, keeps you logged in across all game prefixes, and handles Proton/Wine setup automatically.
 
 ## Why This Was Rewritten in Go
 
-- To distribute a self-contained Linux binary (no Python runtime required for users)
-- To get stricter error handling and safer file/process operations for setup and launch flows
-- To improve reliability around Steam/Proton command parsing, prefix detection, and recovery behavior
-- To keep long-term maintenance simpler with a typed, modular codebase (`launch`, `doctor`, `setup`, `prefix`)
+- Self-contained Linux binary – no Python runtime required
+- Stricter error handling and safer file/process operations
+- Reliable Steam/Proton command parsing, prefix detection, and recovery behavior
+- Typed, modular codebase (`launch`, `doctor`, `setup`, `prefix`) for easier long-term maintenance
 
-## What This Tool Does
+## How It Works
 
-- Starts WeMod with Wine (or Proton Wine, when available)
-- Detects Steam `%command%` / Proton launch commands automatically
-- Uses the same prefix as the game in Proton sessions
-- Creates and validates working directories and base configuration automatically
-- Installs missing prefix components (`corefonts`, `dotnet48`) when required
-- Supports optional desktop feedback via `notify-send` and `zenity`
+1. **Setup (once):** Build a dedicated WeMod prefix and download the WeMod binary.
+2. **Login (once):** Start WeMod in standalone mode (`wemod`), log into your WeMod account, configure settings.
+3. **Play:** Use `wemod %command%` as a Steam launch option. Your login and settings are synced into the game's Proton prefix automatically.
 
 ## Requirements
 
@@ -26,28 +23,26 @@ This project starts WeMod alongside your game and handles common Proton/Wine sce
 - `wineserver`
 - `winetricks`
 - `go` (optional, only needed for building from source)
-- optional: `notify-send`, `zenity`
+- optional: `notify-send`, `zenity` (desktop notifications and progress dialogs)
 
-## Build (Optional, from Source)
+## Build from Source (Optional)
 
 ```bash
 go build -o wemod-launcher ./cmd/wemod-launcher
 chmod +x ./wemod
 ```
 
-## Installation & Usage
+## Installation
 
 ### 1) Download from GitHub Releases
 
 ```bash
-# Create a local install directory
 mkdir -p ~/.local/share/wemod-launcher-app
 cd ~/.local/share/wemod-launcher-app
 
 # Download the correct archive for your architecture from:
 # https://github.com/NichSchlagen/wemod-proton-launcher-go/releases/latest
-
-# Use `amd64` for x86_64 systems and `arm64` for aarch64/ARM64 systems.
+# Use `amd64` for x86_64, `arm64` for aarch64/ARM64.
 ARCH=amd64
 
 # Verify checksum (optional, recommended)
@@ -55,182 +50,129 @@ sha256sum -c "wemod-launcher-linux-${ARCH}.tar.gz.sha256"
 
 # Extract (contains: wemod-launcher and wemod)
 tar -xzf "wemod-launcher-linux-${ARCH}.tar.gz"
+chmod +x ./wemod-launcher ./wemod
 ```
 
 ### 2) Install dependencies
 
-Install at least:
-
-- `wine`
-- `wineserver`
-- `winetricks`
-
-Optional (desktop notifications / progress dialogs):
-
-- `notify-send`
-- `zenity`
-
-Examples:
-
 ```bash
 # Debian/Ubuntu
-sudo apt update
 sudo apt install -y wine winetricks zenity libnotify-bin
 
 # Arch
 sudo pacman -S --needed wine winetricks zenity libnotify
 ```
 
-### 3) Make release files executable
+### 3) Run setup
 
 ```bash
-chmod +x ./wemod-launcher ./wemod
+./wemod doctor   # check dependencies
+./wemod setup    # download WeMod + build Wine prefix
 ```
 
-### 4) Run diagnostics and setup
+### 4) Log in to WeMod (once)
 
 ```bash
-./wemod doctor
-./wemod setup
+./wemod          # starts WeMod standalone – log in and configure
 ```
 
-### 5) (Optional) Register global `wemod` command
+### 5) Set Steam launch option
 
-Keep `wemod` and `wemod-launcher` together in the same install directory
-(for example `~/.local/share/wemod-launcher-app`).
-Only create a symlink for `wemod`.
+```text
+/absolute/path/to/wemod %command%
+```
 
-Option A (user-local, recommended):
+Your WeMod login and settings will be synced into the game's Proton prefix automatically on first launch.
+
+### 6) (Optional) Register global `wemod` command
+
+Keep `wemod` and `wemod-launcher` in the same directory. Only symlink `wemod`:
 
 ```bash
 mkdir -p ~/.local/bin
 ln -sf ~/.local/share/wemod-launcher-app/wemod ~/.local/bin/wemod
 ```
 
-Ensure `~/.local/bin` is in your `PATH`:
+Ensure `~/.local/bin` is in your `PATH` (add to `~/.bashrc` or `~/.zshrc`):
 
 ```bash
-# bash/zsh
 export PATH="$HOME/.local/bin:$PATH"
-
-# fish
-fish_add_path ~/.local/bin
 ```
 
-Option B (system-wide):
-
-```bash
-sudo ln -sf ~/.local/share/wemod-launcher-app/wemod /usr/local/bin/wemod
-```
-
-Then you can run:
+Then you can use:
 
 ```bash
 wemod doctor
 wemod setup
-```
-
-### 6) Use it in Steam
-
-Set the game's launch option to:
-
-```text
-/absolute/path/to/wemod %command%
-```
-
-If you registered the global command and Steam inherits your shell `PATH`, this may also work:
-
-```text
-wemod %command%
-```
-
-## Quick Start
-
-```bash
-./wemod doctor
-./wemod setup
-```
-
-Steam Launch Option:
-
-```text
-/path/to/wemod-launcher/wemod %command%
+wemod %command%   # as Steam launch option
 ```
 
 ## CLI Commands
 
-- `launch [--] <game command...>`
-- `setup`
-- `doctor`
-- `prefix download`
-- `prefix build`
-- `config init`
-- `help`
+| Command | Description |
+|---|---|
+| `launch [--] <game command...>` | Launch WeMod with a game (default when called via `%command%`) |
+| `setup` | Download WeMod binary and build the Wine prefix |
+| `doctor` | Check system dependencies |
+| `config init` | (Re)create the default config file |
+| `help` | Show command overview |
 
 ### Global Flags
 
-- `--config <path>`: use a custom TOML config file
-- `--log-level <debug|info|warn|error>`: override log level for this run
-- `--non-interactive`: disable prompts
-- `--version`: print version
-
-## Setup Strategies
-
-`setup` downloads WeMod first and then offers three (interactive) prefix options:
-
-- `download`: download a ready-made prefix from GitHub releases
-- `build`: build the prefix locally with `winetricks`
-- `skip`: skip prefix setup
+| Flag | Description |
+|---|---|
+| `--config <path>` | Use a custom TOML config file |
+| `--log-level <debug\|info\|warn\|error>` | Override log level for this run |
+| `--non-interactive` | Disable all prompts |
+| `--version` | Print version |
 
 ## Steam/Proton Behavior
 
-- `%command%` is supported directly
-- Proton calls like `.../proton waitforexitandrun ...` are detected
-- When Proton is detected, WeMod uses the game prefix (`WINEPREFIX` / `STEAM_COMPAT_DATA_PATH`)
-- If `corefonts` or `dotnet48` are missing in Proton sessions, they are installed automatically
-- Plain `.exe` calls without a Proton/Wine wrapper are intentionally rejected
+- `%command%` is supported directly as a Steam launch option
+- Proton calls (`.../proton waitforexitandrun ...`) are detected automatically
+- When Proton is detected, WeMod runs inside the game's Proton prefix
+- `corefonts` and `dotnet48` are installed into the game prefix on first launch (required by WeMod)
+- WeMod login data and settings are synced from the own prefix into the game prefix on every launch
+- Plain `.exe` calls without a Proton/Wine wrapper are rejected with a clear error
 
 ## Configuration
 
-The configuration file is created automatically at:
-
-- `~/.config/wemod-launcher/wemod.toml`
+Config is created automatically at `~/.config/wemod-launcher/wemod.toml`.
 
 Important defaults:
 
-- `paths.wemod_exe_path`: `~/.local/share/wemod-launcher/wemod_bin/WeMod.exe`
-- `paths.prefix_dir`: `~/.local/share/wemod-launcher/wemod_prefix`
-- `general.log_file`: `~/.local/share/wemod-launcher/wemod-launcher.log`
-- `prefix.download_url`: `auto`
+| Key | Default |
+|---|---|
+| `paths.wemod_exe_path` | `~/.local/share/wemod-launcher/wemod_bin/WeMod.exe` |
+| `paths.prefix_dir` | `~/.local/share/wemod-launcher/wemod_prefix` |
+| `general.log_file` | `~/.local/share/wemod-launcher/wemod-launcher.log` |
+| `general.log_level` | `info` |
 
 ## Troubleshooting
 
-- First diagnostic check: `./wemod doctor`
+- Run `./wemod doctor` to check all dependencies.
 - Re-run setup: `./wemod setup`
-- Manual prefix handling:
-	- `./wemod prefix download`
-	- `./wemod prefix build`
+- Log in again: `./wemod` (standalone, no game)
+- Check logs: `~/.local/share/wemod-launcher/wemod-launcher.log`
+- For more verbose output: `./wemod --log-level debug %command%`
 
 ## Known Issues
 
-- `PROTON_ENABLE_WAYLAND=1` can cause a white WeMod window.
-- Recommended workaround: do not set `PROTON_ENABLE_WAYLAND=1` for launch options that use `wemod %command%`.
-- Example launch option:
+- `PROTON_ENABLE_WAYLAND=1` can cause a white WeMod window. Disable it for this launch option:
 
 ```text
-MANGOHUD=1 gamemoderun /absolute/path/to/wemod %command%
+PROTON_ENABLE_WAYLAND=0 /absolute/path/to/wemod %command%
 ```
 
 ## Notes
 
-- Linux-only Scope
+- Linux-only
 - Not officially affiliated with WeMod
 
 ## Credits
 
 - Original WeMod launcher: [DeckCheatz/wemod-launcher](https://github.com/DeckCheatz/wemod-launcher)
-- Big thanks to Marvin1099 [Marvin1099](https://github.com/Marvin1099) for the original groundwork and for making the project publicly available
-- This repository is a Go rewrite/continuation tailored for Linux Steam/Proton workflows
-- Prefix download source: [DeckCheatz/BuiltPrefixes-dev](https://github.com/DeckCheatz/BuiltPrefixes-dev)
-- Thanks to everyone sharing fixes, prefixes, and Linux/Proton findings with the community
+- Thanks to [Marvin1099](https://github.com/Marvin1099) for the original groundwork
+- This repository is a Go rewrite tailored for Linux Steam/Proton workflows
 - WeMod is a third-party product and trademark of its respective owners
+

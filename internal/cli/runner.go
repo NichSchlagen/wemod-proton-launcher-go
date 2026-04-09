@@ -81,8 +81,7 @@ func printMainUsage() {
 	fmt.Println("  launch [--] <game command...>")
 	fmt.Println("  setup")
 	fmt.Println("  doctor")
-	fmt.Println("  prefix download")
-	fmt.Println("  prefix build")
+	fmt.Println("  prefix <download|build>")
 	fmt.Println("  config init")
 }
 
