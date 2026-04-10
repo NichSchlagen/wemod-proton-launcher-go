@@ -38,7 +38,11 @@ func RunSetup(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 }
 
 func askSetupStrategy() (string, error) {
-	fmt.Print("Set up WeMod-Prefix: [b]uild, [d]ownload or [s]kip? [b/d/s]: ")
+	fmt.Println("How do you want to set up the WeMod prefix?")
+	fmt.Println("  [d] download  – prebuilt prefix, ready in ~1-2 min (recommended)")
+	fmt.Println("  [b] build     – install via winetricks locally, takes ~10-20 min")
+	fmt.Println("  [s] skip      – do nothing")
+	fmt.Print("Choice [D/b/s]: ")
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -48,9 +52,9 @@ func askSetupStrategy() (string, error) {
 	switch normalized {
 	case "s", "skip":
 		return "skip", nil
-	case "d", "download":
-		return "download", nil
-	default:
+	case "b", "build":
 		return "build", nil
+	default:
+		return "download", nil
 	}
 }
