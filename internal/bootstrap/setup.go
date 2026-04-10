@@ -30,13 +30,15 @@ func RunSetup(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	case "skip":
 		logger.Info("prefix setup skipped by user")
 		return nil
+	case "download":
+		return prefix.Download(ctx, cfg, logger)
 	default:
 		return prefix.Build(ctx, cfg, logger)
 	}
 }
 
 func askSetupStrategy() (string, error) {
-	fmt.Print("Set up WeMod-Prefix: [b]uild or [s]kip? [B/s]: ")
+	fmt.Print("Set up WeMod-Prefix: [b]uild, [d]ownload or [s]kip? [b/d/s]: ")
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -46,6 +48,8 @@ func askSetupStrategy() (string, error) {
 	switch normalized {
 	case "s", "skip":
 		return "skip", nil
+	case "d", "download":
+		return "download", nil
 	default:
 		return "build", nil
 	}

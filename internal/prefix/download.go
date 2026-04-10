@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -111,6 +112,15 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	// Clean up downloaded archive
 	_ = os.Remove(archivePath)
 
+	// Initialize the prefix on this system so the first WeMod launch is clean.
+	// Run wineboot headless (DISPLAY unset) to prevent Wine error dialogs while
+	// still performing all registry and server-registration work.
+	fmt.Println("Initializing Wine prefix ...")
+	logger.Info("running wineboot -u to initialize prefix")
+	if bootErr := runWinebootHeadless(ctx, cfg.Paths.PrefixDir); bootErr != nil {
+		logger.Warn("wineboot initialization failed, first launch may show a Wine dialog: %v", bootErr)
+	}
+
 	fmt.Printf("Prefix ready at %s\n", cfg.Paths.PrefixDir)
 	logger.Info("prefix ready at %s", cfg.Paths.PrefixDir)
 	return nil
@@ -172,14 +182,54 @@ func extractZip(src, dest string) error {
 	}
 	defer r.Close()
 
+	// Resolve dest to absolute path for traversal checks.
+	destAbs, err := filepath.Abs(dest)
+	if err != nil {
+		return fmt.Errorf("resolve dest path: %w", err)
+	}
+
 	for _, f := range r.File {
-		target := filepath.Join(dest, f.Name)
+		target := filepath.Join(destAbs, f.Name)
+
+		// Path traversal guard.
+		if !strings.HasPrefix(target, destAbs+string(os.PathSeparator)) && target != destAbs {
+			return fmt.Errorf("zip entry %q would escape destination, refusing to extract", f.Name)
+		}
+
+		mode := f.Mode()
+
+		// Symlink.
+		if mode&os.ModeSymlink != 0 {
+			rc, err := f.Open()
+			if err != nil {
+				return fmt.Errorf("open symlink zip entry %s: %w", f.Name, err)
+			}
+			linkTargetBytes, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return fmt.Errorf("read symlink target %s: %w", f.Name, err)
+			}
+			linkTarget := string(linkTargetBytes)
+			// Remove existing entry.
+			_ = os.Remove(target)
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return fmt.Errorf("create parent dir for symlink %s: %w", target, err)
+			}
+			if err := os.Symlink(linkTarget, target); err != nil {
+				return fmt.Errorf("create symlink %s -> %s: %w", target, linkTarget, err)
+			}
+			continue
+		}
+
+		// Directory.
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, f.Mode()); err != nil {
 				return fmt.Errorf("create dir %s: %w", target, err)
 			}
 			continue
 		}
+
+		// Regular file.
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fmt.Errorf("create parent dir %s: %w", target, err)
 		}
@@ -207,4 +257,38 @@ func extractZip(src, dest string) error {
 	}
 
 	return nil
+}
+
+// runWinebootHeadless runs "wineboot -u" with DISPLAY unset so Wine cannot
+// open error dialogs on screen. All other environment variables are kept so
+// that Wine can find its libraries and the prefix.
+func runWinebootHeadless(ctx context.Context, prefixDir string) error {
+	overrides := map[string]string{
+		"WINEPREFIX":       prefixDir,
+		"DISPLAY":          "",
+		"WAYLAND_DISPLAY":  "",
+		"WINEDLLOVERRIDES": "mscoree,mshtml=",
+	}
+
+	// Build env: start from os.Environ, then apply overrides (replace if key exists).
+	base := os.Environ()
+	filtered := make([]string, 0, len(base))
+	for _, kv := range base {
+		key := kv
+		if idx := strings.IndexByte(kv, '='); idx >= 0 {
+			key = kv[:idx]
+		}
+		if _, overridden := overrides[key]; !overridden {
+			filtered = append(filtered, kv)
+		}
+	}
+	for k, v := range overrides {
+		filtered = append(filtered, k+"="+v)
+	}
+
+	cmd := exec.CommandContext(ctx, "wineboot", "-u")
+	cmd.Env = filtered
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run()
 }
