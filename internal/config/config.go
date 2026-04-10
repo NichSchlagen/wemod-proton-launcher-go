@@ -9,7 +9,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-const AppVersion = "1.0.0"
+const AppVersion = "v1.1.0-rc1"
 const LegacyPrefixURL = "https://github.com/NichSchlagen/wemod-proton-launcher-go/releases/latest/download/prefix.zip"
 
 type Config struct {
