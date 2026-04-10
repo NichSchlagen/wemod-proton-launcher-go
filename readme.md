@@ -65,15 +65,27 @@ sudo pacman -S --needed wine winetricks zenity libnotify
 
 ### 3) Run setup
 
+Two options for setting up the WeMod prefix:
+
+**Option A: Quick Download (Recommended)**
+
+```bash
+./wemod doctor         # check dependencies
+./wemod prefix download # download pre-built prefix (~2-3 min)
+./wemod                # start WeMod standalone to log in
+```
+
+**Option B: Local Build**
+
 ```bash
 ./wemod doctor   # check dependencies
-./wemod setup    # download WeMod + build Wine prefix
+./wemod setup    # build WeMod prefix locally (~20-30 min)
 ```
 
 ### 4) Log in to WeMod (once)
 
 ```bash
-./wemod          # starts WeMod standalone – log in and configure
+./wemod          # starts WeMod standalone – log in and configure settings
 ```
 
 ### 5) Set Steam launch option
@@ -114,6 +126,10 @@ wemod %command%   # as Steam launch option
 | `launch [--] <game command...>` | Launch WeMod with a game (default when called via `%command%`) |
 | `setup` | Download WeMod binary and build the Wine prefix |
 | `doctor` | Check system dependencies |
+| `sync [--] <proton game command...>` | Copy WeMod login/settings from own prefix into a Proton game prefix |
+| `reset` | Delete and recreate the own WeMod prefix (`paths.prefix_dir`) |
+| `prefix download` | Download a ready-made own WeMod prefix |
+| `prefix build` | Build own WeMod prefix locally with winetricks |
 | `config init` | (Re)create the default config file |
 | `help` | Show command overview |
 
@@ -153,6 +169,9 @@ Important defaults:
 - Run `./wemod doctor` to check all dependencies.
 - Re-run setup: `./wemod setup`
 - Log in again: `./wemod` (standalone, no game)
+- Force a manual sync into a game prefix:
+	`./wemod sync -- /path/to/proton waitforexitandrun ...`
+- Reset own prefix if it got corrupted: `./wemod reset`
 - Check logs: `~/.local/share/wemod-launcher/wemod-launcher.log`
 - For more verbose output: `./wemod --log-level debug %command%`
 

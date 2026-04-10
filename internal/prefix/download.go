@@ -15,7 +15,7 @@ import (
 	"github.com/NichSchlagen/wemod-proton-launcher-go/internal/logging"
 )
 
-const defaultPrefixRepoAPI = "https://api.github.com/repos/DeckCheatz/BuiltPrefixes-dev/releases/latest"
+const defaultPrefixRepoAPI = "https://api.github.com/repos/NichSchlagen/wemod-prefix/releases/latest"
 
 type githubRelease struct {
 	Assets []struct {
@@ -27,9 +27,6 @@ type githubRelease struct {
 func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) error {
 	if err := os.MkdirAll(cfg.Paths.DownloadDir, 0o755); err != nil {
 		return fmt.Errorf("create download dir: %w", err)
-	}
-	if err := os.MkdirAll(cfg.Paths.PrefixDir, 0o755); err != nil {
-		return fmt.Errorf("create prefix dir: %w", err)
 	}
 
 	archivePath := filepath.Join(cfg.Paths.DownloadDir, "prefix.zip")
@@ -44,6 +41,7 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	}
 
 	logger.Info("downloading prefix from %s", url)
+	fmt.Println("Downloading WeMod prefix ...")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -61,7 +59,8 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 			return fmt.Errorf("download prefix failed with status %d", resp.StatusCode)
 		}
 		if fallbackURL != url {
-			logger.Warn("configured prefix URL failed with status %d, retrying with %s", resp.StatusCode, fallbackURL)
+			logger.Warn("configured prefix URL failed (status %d), retrying with latest release", resp.StatusCode)
+			fmt.Println("Retrying with latest release ...")
 			req, err = http.NewRequestWithContext(ctx, http.MethodGet, fallbackURL, nil)
 			if err != nil {
 				return fmt.Errorf("create fallback request: %w", err)
@@ -83,21 +82,57 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	if err != nil {
 		return fmt.Errorf("create archive file: %w", err)
 	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
+
+	total := resp.ContentLength
+	written, err := io.Copy(out, &progressReader{r: resp.Body, total: total})
+	if err != nil {
 		out.Close()
 		return fmt.Errorf("save archive: %w", err)
 	}
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("close archive file: %w", err)
 	}
+	fmt.Printf("\rDownloaded %.1f MB                        \n", float64(written)/1024/1024)
 
-	logger.Info("extracting prefix archive")
+	// Remove old prefix before extracting
+	if err := os.RemoveAll(cfg.Paths.PrefixDir); err != nil {
+		return fmt.Errorf("remove old prefix: %w", err)
+	}
+	if err := os.MkdirAll(cfg.Paths.PrefixDir, 0o755); err != nil {
+		return fmt.Errorf("create prefix dir: %w", err)
+	}
+
+	fmt.Println("Extracting prefix archive ...")
+	logger.Info("extracting prefix archive to %s", cfg.Paths.PrefixDir)
 	if err := extractZip(archivePath, cfg.Paths.PrefixDir); err != nil {
 		return err
 	}
 
+	// Clean up downloaded archive
+	_ = os.Remove(archivePath)
+
+	fmt.Printf("Prefix ready at %s\n", cfg.Paths.PrefixDir)
 	logger.Info("prefix ready at %s", cfg.Paths.PrefixDir)
 	return nil
+}
+
+// progressReader prints a simple download progress line.
+type progressReader struct {
+	r       io.Reader
+	total   int64
+	written int64
+}
+
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.r.Read(buf)
+	p.written += int64(n)
+	if p.total > 0 {
+		pct := float64(p.written) / float64(p.total) * 100
+		fmt.Printf("\r  %.0f%% (%.1f / %.1f MB)", pct, float64(p.written)/1024/1024, float64(p.total)/1024/1024)
+	} else {
+		fmt.Printf("\r  %.1f MB downloaded", float64(p.written)/1024/1024)
+	}
+	return n, err
 }
 
 func resolveLatestPrefixAssetURL(ctx context.Context) (string, error) {

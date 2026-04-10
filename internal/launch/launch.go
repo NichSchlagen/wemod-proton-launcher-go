@@ -64,7 +64,9 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 		}
 
 		// Sync WeMod login + config from own prefix into game prefix
-		syncWeModData(logger, cfg.Paths.PrefixDir, wemodPrefix)
+		if err := syncWeModData(logger, cfg.Paths.PrefixDir, wemodPrefix); err != nil {
+			logger.Warn("sync WeMod data to game prefix failed: %v", err)
+		}
 	}
 
 	if len(gameCmd) == 0 {
@@ -149,6 +151,44 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 		logger.Info("game process finished")
 	}
 
+	return nil
+}
+
+// Sync copies WeMod login/settings from the own prefix into a Proton game prefix.
+// It accepts either a Proton game command or uses STEAM_COMPAT_DATA_PATH/WINEPREFIX.
+func Sync(ctx context.Context, cfg *config.Config, logger *logging.Logger, args []string) error {
+	gameCmd, _, err := parseGameCommandArgs(args)
+	if err != nil {
+		return err
+	}
+
+	targetPrefix, protonMode := resolveWeModPrefix(cfg, gameCmd)
+	if !protonMode {
+		return errors.New("sync requires a Proton prefix (pass %command% or set STEAM_COMPAT_DATA_PATH/WINEPREFIX)")
+	}
+
+	if err := syncWeModData(logger, cfg.Paths.PrefixDir, targetPrefix); err != nil {
+		return err
+	}
+	logger.Info("sync command completed")
+	return nil
+}
+
+// ResetOwnPrefix removes and recreates the dedicated own WeMod prefix.
+func ResetOwnPrefix(cfg *config.Config, logger *logging.Logger) error {
+	prefixDir := strings.TrimSpace(cfg.Paths.PrefixDir)
+	if prefixDir == "" {
+		return errors.New("paths.prefix_dir is empty")
+	}
+
+	logger.Warn("resetting own WeMod prefix at %s", prefixDir)
+	if err := os.RemoveAll(prefixDir); err != nil {
+		return fmt.Errorf("remove own prefix: %w", err)
+	}
+	if err := os.MkdirAll(prefixDir, 0o755); err != nil {
+		return fmt.Errorf("recreate own prefix dir: %w", err)
+	}
+	logger.Info("own WeMod prefix reset complete")
 	return nil
 }
 
@@ -379,25 +419,23 @@ func ensurePrefixRuntime(ctx context.Context, logger *logging.Logger, prefixPath
 
 // syncWeModData copies the WeMod AppData folder (login + settings) from the
 // own WeMod prefix into the game's Proton prefix, so the user stays logged in.
-func syncWeModData(logger *logging.Logger, ownPrefixDir, gamePrefixDir string) {
+func syncWeModData(logger *logging.Logger, ownPrefixDir, gamePrefixDir string) error {
 	src := findWeModAppDataDir(ownPrefixDir)
 	if src == "" {
-		logger.Info("no WeMod data found in own prefix, skipping sync")
-		return
+		return errors.New("no WeMod data found in own prefix (start WeMod once in no-game mode first)")
 	}
 
 	dst := findOrCreateWeModAppDataDir(gamePrefixDir)
 	if dst == "" {
-		logger.Warn("could not resolve WeMod AppData target in game prefix, skipping sync")
-		return
+		return errors.New("could not resolve WeMod AppData target in game prefix")
 	}
 
 	logger.Info("syncing WeMod data: %s -> %s", src, dst)
 	if err := copyDir(src, dst); err != nil {
-		logger.Warn("WeMod data sync failed: %v", err)
-		return
+		return fmt.Errorf("copy WeMod AppData: %w", err)
 	}
 	logger.Info("WeMod data synced successfully")
+	return nil
 }
 
 // findWeModAppDataDir walks drive_c/users/*/AppData/Roaming/WeMod in the given prefix.

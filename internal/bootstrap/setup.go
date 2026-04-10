@@ -36,7 +36,7 @@ func RunSetup(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 }
 
 func askSetupStrategy() (string, error) {
-	fmt.Print("WeMod-Prefix einrichten: [b]uild oder [s]kip? [B/s]: ")
+	fmt.Print("Set up WeMod-Prefix: [b]uild or [s]kip? [B/s]: ")
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {

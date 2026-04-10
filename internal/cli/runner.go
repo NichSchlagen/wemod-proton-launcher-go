@@ -41,6 +41,10 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, args []string) err
 		err = bootstrap.RunSetup(ctx, cfg, r.logger)
 	case "doctor":
 		err = doctor.Run(ctx, cfg, r.logger, doctor.Options{FailOnMissing: false})
+	case "sync":
+		err = launch.Sync(ctx, cfg, r.logger, args[1:])
+	case "reset":
+		err = launch.ResetOwnPrefix(cfg, r.logger)
 	case "prefix":
 		if len(args) < 2 {
 			printPrefixUsage()
@@ -81,6 +85,8 @@ func printMainUsage() {
 	fmt.Println("  launch [--] <game command...>")
 	fmt.Println("  setup")
 	fmt.Println("  doctor")
+	fmt.Println("  sync [--] <proton game command...>")
+	fmt.Println("  reset")
 	fmt.Println("  prefix <download|build>")
 	fmt.Println("  config init")
 }
