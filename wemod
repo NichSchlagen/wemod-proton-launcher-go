@@ -27,13 +27,48 @@ run_launcher() {
 }
 
 first_arg="${1:-}"
-case "$first_arg" in
-  launch|setup|doctor|prefix|config|help|--help|-h|--version|-version)
-    status "mode: explicit command ($first_arg)"
-    run_launcher "$@"
+
+global_args=()
+command_args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --)
+      shift
+      command_args+=("$@")
+      break
+      ;;
+    --non-interactive|--version)
+      global_args+=("$1")
+      shift
+      ;;
+    --config|--log-level)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for $1" >&2
+        exit 2
+      fi
+      global_args+=("$1" "$2")
+      shift 2
+      ;;
+    --config=*|--log-level=*)
+      global_args+=("$1")
+      shift
+      ;;
+    *)
+      command_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+first_command_arg="${command_args[0]:-}"
+case "$first_command_arg" in
+  launch|setup|doctor|prefix|config|help|--help|-h|--version)
+    status "mode: explicit command ($first_command_arg)"
+    run_launcher "${global_args[@]}" "${command_args[@]}"
     ;;
   *)
     status "mode: Steam passthrough (launch -- %command%)"
-    run_launcher launch -- "$@"
+    run_launcher "${global_args[@]}" launch -- "${command_args[@]}"
     ;;
 esac

@@ -29,6 +29,9 @@ type scoopMetadata struct {
 }
 
 func EnsureWeMod(ctx context.Context, cfg *config.Config, logger *logging.Logger, force bool) error {
+	logger = logger.WithComponent("bootstrap.wemod")
+	logger.Debug("ensure wemod called (force=%t)", force)
+	logger.Debug("wemod executable target: %s", cfg.Paths.WeModExePath)
 	if !force {
 		if _, err := os.Stat(cfg.Paths.WeModExePath); err == nil {
 			logger.Info("WeMod executable already present at %s", cfg.Paths.WeModExePath)
@@ -37,36 +40,45 @@ func EnsureWeMod(ctx context.Context, cfg *config.Config, logger *logging.Logger
 	}
 
 	if err := os.MkdirAll(cfg.Paths.DownloadDir, 0o755); err != nil {
+		logger.Error("failed creating download dir %s: %v", cfg.Paths.DownloadDir, err)
 		return fmt.Errorf("create download dir: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Paths.WeModExePath), 0o755); err != nil {
+		logger.Error("failed creating wemod bin dir for %s: %v", cfg.Paths.WeModExePath, err)
 		return fmt.Errorf("create wemod bin dir: %w", err)
 	}
 
 	url, err := fetchWeModDownloadURL(ctx)
 	if err != nil {
+		logger.Error("failed resolving WeMod installer URL: %v", err)
 		return err
 	}
 	logger.Info("resolved WeMod installer URL")
+	logger.Debug("installer URL: %s", url)
 
 	installerPath := filepath.Join(cfg.Paths.DownloadDir, "wemod-setup.exe")
 	if err := downloadFile(ctx, url, installerPath); err != nil {
+		logger.Error("failed downloading installer: %v", err)
 		return err
 	}
 	logger.Info("downloaded WeMod installer")
 
 	installRoot := filepath.Dir(cfg.Paths.WeModExePath)
 	if err := os.RemoveAll(installRoot); err != nil {
+		logger.Error("failed cleaning old install root %s: %v", installRoot, err)
 		return fmt.Errorf("cleanup old wemod install: %w", err)
 	}
 	if err := os.MkdirAll(installRoot, 0o755); err != nil {
+		logger.Error("failed creating install root %s: %v", installRoot, err)
 		return fmt.Errorf("create install root: %w", err)
 	}
 
 	if err := extractNetPayload(installerPath, installRoot); err != nil {
+		logger.Error("failed extracting installer payload: %v", err)
 		return err
 	}
 	if _, err := os.Stat(cfg.Paths.WeModExePath); err != nil {
+		logger.Error("extraction verification failed, executable missing at %s", cfg.Paths.WeModExePath)
 		return fmt.Errorf("wemod extracted but executable missing at %s", cfg.Paths.WeModExePath)
 	}
 

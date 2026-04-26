@@ -26,7 +26,12 @@ type githubRelease struct {
 }
 
 func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) error {
+	logger = logger.WithComponent("prefix.download")
+	logger.Info("prefix download workflow started")
+	logger.Debug("download dir=%s prefix dir=%s", cfg.Paths.DownloadDir, cfg.Paths.PrefixDir)
+
 	if err := os.MkdirAll(cfg.Paths.DownloadDir, 0o755); err != nil {
+		logger.Error("failed creating download dir %s: %v", cfg.Paths.DownloadDir, err)
 		return fmt.Errorf("create download dir: %w", err)
 	}
 
@@ -34,8 +39,10 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 
 	url := strings.TrimSpace(cfg.Prefix.DownloadURL)
 	if url == "" || strings.EqualFold(url, "auto") {
+		logger.Debug("prefix.download_url set to auto; resolving latest release asset")
 		resolved, err := resolveLatestPrefixAssetURL(ctx)
 		if err != nil {
+			logger.Error("failed resolving latest prefix release URL: %v", err)
 			return err
 		}
 		url = resolved
@@ -50,13 +57,16 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		logger.Error("download request failed: %v", err)
 		return fmt.Errorf("download prefix: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		logger.Warn("primary prefix URL returned status %d", resp.StatusCode)
 		fallbackURL, fallbackErr := resolveLatestPrefixAssetURL(ctx)
 		if fallbackErr != nil {
+			logger.Error("fallback URL resolution failed after status %d: %v", resp.StatusCode, fallbackErr)
 			return fmt.Errorf("download prefix failed with status %d", resp.StatusCode)
 		}
 		if fallbackURL != url {
@@ -68,19 +78,23 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 			}
 			resp, err = http.DefaultClient.Do(req)
 			if err != nil {
+				logger.Error("fallback download failed: %v", err)
 				return fmt.Errorf("download fallback prefix: %w", err)
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode < 200 || resp.StatusCode > 299 {
+				logger.Error("fallback URL returned status %d", resp.StatusCode)
 				return fmt.Errorf("download prefix failed with status %d", resp.StatusCode)
 			}
 		} else {
+			logger.Error("download failed with status %d and fallback URL equals primary URL", resp.StatusCode)
 			return fmt.Errorf("download prefix failed with status %d", resp.StatusCode)
 		}
 	}
 
 	out, err := os.Create(archivePath)
 	if err != nil {
+		logger.Error("failed creating archive file %s: %v", archivePath, err)
 		return fmt.Errorf("create archive file: %w", err)
 	}
 
@@ -88,24 +102,30 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	written, err := io.Copy(out, &progressReader{r: resp.Body, total: total})
 	if err != nil {
 		out.Close()
+		logger.Error("failed writing archive file %s: %v", archivePath, err)
 		return fmt.Errorf("save archive: %w", err)
 	}
 	if err := out.Close(); err != nil {
+		logger.Error("failed closing archive file %s: %v", archivePath, err)
 		return fmt.Errorf("close archive file: %w", err)
 	}
+	logger.Debug("archive downloaded: %.2f MB", float64(written)/1024.0/1024.0)
 	fmt.Printf("\rDownloaded %.1f MB                        \n", float64(written)/1024/1024)
 
 	// Remove old prefix before extracting
 	if err := os.RemoveAll(cfg.Paths.PrefixDir); err != nil {
+		logger.Error("failed removing old prefix dir %s: %v", cfg.Paths.PrefixDir, err)
 		return fmt.Errorf("remove old prefix: %w", err)
 	}
 	if err := os.MkdirAll(cfg.Paths.PrefixDir, 0o755); err != nil {
+		logger.Error("failed recreating prefix dir %s: %v", cfg.Paths.PrefixDir, err)
 		return fmt.Errorf("create prefix dir: %w", err)
 	}
 
 	fmt.Println("Extracting prefix archive ...")
 	logger.Info("extracting prefix archive to %s", cfg.Paths.PrefixDir)
 	if err := extractZip(archivePath, cfg.Paths.PrefixDir); err != nil {
+		logger.Error("failed extracting prefix archive %s: %v", archivePath, err)
 		return err
 	}
 
@@ -119,10 +139,13 @@ func Download(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	logger.Info("running wineboot -u to initialize prefix")
 	if bootErr := runWinebootHeadless(ctx, cfg.Paths.PrefixDir); bootErr != nil {
 		logger.Warn("wineboot initialization failed, first launch may show a Wine dialog: %v", bootErr)
+	} else {
+		logger.Debug("wineboot initialization finished successfully")
 	}
 
 	fmt.Printf("Prefix ready at %s\n", cfg.Paths.PrefixDir)
 	logger.Info("prefix ready at %s", cfg.Paths.PrefixDir)
+	logger.Info("prefix download workflow completed")
 	return nil
 }
 

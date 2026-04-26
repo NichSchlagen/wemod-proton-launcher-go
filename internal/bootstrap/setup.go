@@ -13,7 +13,10 @@ import (
 )
 
 func RunSetup(ctx context.Context, cfg *config.Config, logger *logging.Logger) error {
+	logger = logger.WithComponent("bootstrap.setup")
+	logger.Info("setup workflow started")
 	if err := EnsureWeMod(ctx, cfg, logger, false); err != nil {
+		logger.Error("setup failed while ensuring WeMod binary: %v", err)
 		return err
 	}
 
@@ -21,18 +24,22 @@ func RunSetup(ctx context.Context, cfg *config.Config, logger *logging.Logger) e
 	if cfg.General.Interactive {
 		choice, err := askSetupStrategy()
 		if err != nil {
+			logger.Error("failed reading setup strategy: %v", err)
 			return err
 		}
 		strategy = choice
 	}
+	logger.Info("selected setup strategy: %s", strategy)
 
 	switch strategy {
 	case "skip":
 		logger.Info("prefix setup skipped by user")
 		return nil
 	case "download":
+		logger.Debug("executing prefix.Download")
 		return prefix.Download(ctx, cfg, logger)
 	default:
+		logger.Debug("executing prefix.Build")
 		return prefix.Build(ctx, cfg, logger)
 	}
 }

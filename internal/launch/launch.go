@@ -28,18 +28,26 @@ type wemodRuntime struct {
 }
 
 func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args []string) error {
+	logger = logger.WithComponent("launch")
+	logger.Info("launch workflow started")
+	logger.Debug("launch args: %q", args)
+
 	gameCmd, parseInfo, err := parseGameCommandArgs(args)
 	if err != nil {
+		logger.Error("failed parsing game command args: %v", err)
 		return err
 	}
 	if parseInfo != "" {
 		logger.Info(parseInfo)
 	}
+	logger.Debug("normalized game command: %q", gameCmd)
 
 	if _, err := os.Stat(cfg.Paths.WeModExePath); err != nil {
+		logger.Warn("WeMod executable missing at %s", cfg.Paths.WeModExePath)
 		if cfg.General.Interactive {
 			ok, askErr := askYesNo("WeMod.exe not found. Run setup now? [Y/n]: ")
 			if askErr != nil {
+				logger.Error("interactive setup prompt failed: %v", askErr)
 				return askErr
 			}
 			if ok {
@@ -70,6 +78,7 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 	}
 
 	if len(gameCmd) == 0 {
+		logger.Info("no game command provided; starting standalone WeMod mode")
 		wemodProc, err := startWeModProcessWithRecovery(ctx, cfg, logger, gameCmd, env, protonMode)
 		if err != nil {
 			return fmt.Errorf("start wemod: %w", err)
@@ -109,6 +118,7 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 	}
 
 	if err := validateCommand(gameCmd[0]); err != nil {
+		logger.Error("game command validation failed for %s: %v", gameCmd[0], err)
 		return err
 	}
 
@@ -150,6 +160,7 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 	} else {
 		logger.Info("game process finished")
 	}
+	logger.Info("launch workflow completed")
 
 	return nil
 }
@@ -157,17 +168,24 @@ func Run(ctx context.Context, cfg *config.Config, logger *logging.Logger, args [
 // Sync copies WeMod login/settings from the own prefix into a Proton game prefix.
 // It accepts either a Proton game command or uses STEAM_COMPAT_DATA_PATH/WINEPREFIX.
 func Sync(ctx context.Context, cfg *config.Config, logger *logging.Logger, args []string) error {
+	logger = logger.WithComponent("launch.sync")
+	logger.Info("sync workflow started")
+	logger.Debug("sync args: %q", args)
+
 	gameCmd, _, err := parseGameCommandArgs(args)
 	if err != nil {
+		logger.Error("failed parsing sync command args: %v", err)
 		return err
 	}
 
 	targetPrefix, protonMode := resolveWeModPrefix(cfg, gameCmd)
 	if !protonMode {
+		logger.Error("sync requested without proton context")
 		return errors.New("sync requires a Proton prefix (pass %command% or set STEAM_COMPAT_DATA_PATH/WINEPREFIX)")
 	}
 
 	if err := syncWeModData(logger, cfg.Paths.PrefixDir, targetPrefix); err != nil {
+		logger.Error("sync workflow failed: %v", err)
 		return err
 	}
 	logger.Info("sync command completed")
@@ -176,16 +194,20 @@ func Sync(ctx context.Context, cfg *config.Config, logger *logging.Logger, args 
 
 // ResetOwnPrefix removes and recreates the dedicated own WeMod prefix.
 func ResetOwnPrefix(cfg *config.Config, logger *logging.Logger) error {
+	logger = logger.WithComponent("launch.reset")
 	prefixDir := strings.TrimSpace(cfg.Paths.PrefixDir)
 	if prefixDir == "" {
+		logger.Error("reset failed: empty paths.prefix_dir")
 		return errors.New("paths.prefix_dir is empty")
 	}
 
 	logger.Warn("resetting own WeMod prefix at %s", prefixDir)
 	if err := os.RemoveAll(prefixDir); err != nil {
+		logger.Error("failed removing prefix dir %s: %v", prefixDir, err)
 		return fmt.Errorf("remove own prefix: %w", err)
 	}
 	if err := os.MkdirAll(prefixDir, 0o755); err != nil {
+		logger.Error("failed recreating prefix dir %s: %v", prefixDir, err)
 		return fmt.Errorf("recreate own prefix dir: %w", err)
 	}
 	logger.Info("own WeMod prefix reset complete")
@@ -362,9 +384,10 @@ func isProtonCommand(gameCmd []string) bool {
 }
 
 func ensurePrefixRuntime(ctx context.Context, logger *logging.Logger, prefixPath string, gameCmd []string, protonMode bool) error {
+	logger = logger.WithComponent("launch.prefix-runtime")
 	markerPath := filepath.Join(prefixPath, runtimeReadyMarker)
 	if _, err := os.Stat(markerPath); err == nil {
-		logger.Info("runtime marker found in game prefix, skipping winetricks checks")
+		logger.Debug("runtime marker found in game prefix, skipping winetricks checks")
 		userNotice("Game prefix already prepared, skipping installation.")
 		return nil
 	}
@@ -420,13 +443,16 @@ func ensurePrefixRuntime(ctx context.Context, logger *logging.Logger, prefixPath
 // syncWeModData copies the WeMod AppData folder (login + settings) from the
 // own WeMod prefix into the game's Proton prefix, so the user stays logged in.
 func syncWeModData(logger *logging.Logger, ownPrefixDir, gamePrefixDir string) error {
+	logger = logger.WithComponent("launch.sync-data")
 	src := findWeModAppDataDir(ownPrefixDir)
 	if src == "" {
+		logger.Error("sync source missing in own prefix: %s", ownPrefixDir)
 		return errors.New("no WeMod data found in own prefix (start WeMod once in no-game mode first)")
 	}
 
 	dst := findOrCreateWeModAppDataDir(gamePrefixDir)
 	if dst == "" {
+		logger.Error("sync target could not be resolved in game prefix: %s", gamePrefixDir)
 		return errors.New("could not resolve WeMod AppData target in game prefix")
 	}
 
@@ -582,8 +608,10 @@ func buildPrefixRuntimeEnv(prefixPath string, gameCmd []string, protonMode bool)
 }
 
 func buildWeModEnv(logger *logging.Logger, prefixPath string, gameCmd []string, protonMode bool) map[string]string {
+	logger = logger.WithComponent("launch.env")
 	env := map[string]string{"WINEPREFIX": prefixPath}
 	if !protonMode || len(gameCmd) == 0 {
+		logger.Debug("build env without proton overrides")
 		return env
 	}
 
@@ -598,11 +626,14 @@ func buildWeModEnv(logger *logging.Logger, prefixPath string, gameCmd []string, 
 		env["PROTON_ENABLE_WAYLAND"] = "0"
 	}
 
+	logger.Debug("build env with keys: WINEPREFIX,WINE,WINESERVER,PROTON_ENABLE_WAYLAND(optional)")
 	return env
 }
 
 func logSteamProtonContext(logger *logging.Logger, gameCmd []string, protonMode bool, wemodPrefix string) {
+	logger = logger.WithComponent("launch.proton")
 	if !protonMode {
+		logger.Debug("proton mode not detected")
 		return
 	}
 
@@ -616,10 +647,10 @@ func logSteamProtonContext(logger *logging.Logger, gameCmd []string, protonMode 
 		}
 	}
 
-	logger.Info("env WINEPREFIX=%q", os.Getenv("WINEPREFIX"))
-	logger.Info("env STEAM_COMPAT_DATA_PATH=%q", os.Getenv("STEAM_COMPAT_DATA_PATH"))
-	logger.Info("env STEAM_COMPAT_CLIENT_INSTALL_PATH=%q", os.Getenv("STEAM_COMPAT_CLIENT_INSTALL_PATH"))
-	logger.Info("env PROTON_ENABLE_WAYLAND=%q", os.Getenv("PROTON_ENABLE_WAYLAND"))
+	logger.Debug("env WINEPREFIX=%q", os.Getenv("WINEPREFIX"))
+	logger.Debug("env STEAM_COMPAT_DATA_PATH=%q", os.Getenv("STEAM_COMPAT_DATA_PATH"))
+	logger.Debug("env STEAM_COMPAT_CLIENT_INSTALL_PATH=%q", os.Getenv("STEAM_COMPAT_CLIENT_INSTALL_PATH"))
+	logger.Debug("env PROTON_ENABLE_WAYLAND=%q", os.Getenv("PROTON_ENABLE_WAYLAND"))
 	logger.Info("effective WeMod prefix=%q", wemodPrefix)
 }
 

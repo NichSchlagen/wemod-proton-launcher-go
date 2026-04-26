@@ -142,6 +142,11 @@ wemod %command%   # as Steam launch option
 | `--non-interactive` | Disable all prompts |
 | `--version` | Print version |
 
+Notes:
+
+- Global options can be placed before or after the command name (for example: `wemod --log-level debug doctor` and `wemod doctor --log-level debug` both work).
+- To pass literal `--...` arguments to the game command, separate launcher options and game command with `--`.
+
 ## Steam/Proton Behavior
 
 - `%command%` is supported directly as a Steam launch option

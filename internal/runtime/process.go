@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -12,7 +13,11 @@ import (
 )
 
 func Run(ctx context.Context, logger *logging.Logger, name string, args []string, env map[string]string) error {
+	logger = logger.WithComponent("runtime")
 	logger.Debug("run command: %s %s", name, strings.Join(args, " "))
+	if len(env) > 0 {
+		logger.Debug("run command env keys: %s", strings.Join(sortedKeys(env), ","))
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -24,13 +29,19 @@ func Run(ctx context.Context, logger *logging.Logger, name string, args []string
 		}
 	}
 	if err := cmd.Run(); err != nil {
+		logger.Error("run failed: %s (%v)", name, err)
 		return fmt.Errorf("run %s: %w", name, err)
 	}
+	logger.Debug("run finished successfully: %s", name)
 	return nil
 }
 
 func Start(ctx context.Context, logger *logging.Logger, name string, args []string, env map[string]string) (*exec.Cmd, error) {
+	logger = logger.WithComponent("runtime")
 	logger.Debug("start command: %s %s", name, strings.Join(args, " "))
+	if len(env) > 0 {
+		logger.Debug("start command env keys: %s", strings.Join(sortedKeys(env), ","))
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -42,12 +53,17 @@ func Start(ctx context.Context, logger *logging.Logger, name string, args []stri
 		}
 	}
 	if err := cmd.Start(); err != nil {
+		logger.Error("start failed: %s (%v)", name, err)
 		return nil, fmt.Errorf("start %s: %w", name, err)
+	}
+	if cmd.Process != nil {
+		logger.Info("process started: %s (pid=%d)", name, cmd.Process.Pid)
 	}
 	return cmd, nil
 }
 
 func StartDetached(ctx context.Context, logger *logging.Logger, name string, args []string, env map[string]string) (*exec.Cmd, error) {
+	logger = logger.WithComponent("runtime")
 	logger.Debug("start detached command: %s %s", name, strings.Join(args, " "))
 	// Detached GUI process must not be tied to launcher context; otherwise it gets
 	// terminated when the launcher exits and cancels its context.
@@ -69,10 +85,24 @@ func StartDetached(ctx context.Context, logger *logging.Logger, name string, arg
 		for k, v := range env {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 		}
+		logger.Debug("detached command env keys: %s", strings.Join(sortedKeys(env), ","))
 	}
 
 	if err := cmd.Start(); err != nil {
+		logger.Error("start detached failed: %s (%v)", name, err)
 		return nil, fmt.Errorf("start detached %s: %w", name, err)
 	}
+	if cmd.Process != nil {
+		logger.Info("detached process started: %s (pid=%d)", name, cmd.Process.Pid)
+	}
 	return cmd, nil
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
